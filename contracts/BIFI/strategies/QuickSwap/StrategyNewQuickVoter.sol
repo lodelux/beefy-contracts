@@ -2,40 +2,40 @@
 
 pragma solidity ^0.6.0;
 
-import "./StrategyCommonChefLP.sol";
-import "./DelegateManagerCommon.sol";
+import "./StrategyNewQuick.sol";
+import "../Common/DelegateManagerCommon.sol";
 
-contract StrategyCommonChefLPVoter is StrategyCommonChefLP, DelegateManagerCommon {
+contract StrategyNewQuickVoter is StrategyNewQuick, DelegateManagerCommon {
 
     constructor(
         address _want,
-        uint256 _poolId,
-        address _chef,
+        address _rewardPool,
+        address _quickConverter,
         address _vault,
         address _unirouter,
         address _keeper,
         address _strategist,
         address _beefyFeeRecipient,
         address[] memory _outputToNativeRoute,
-        address[] memory _outputToLp0Route,
-        address[] memory _outputToLp1Route,
+        address[] memory _outputToWantRoute,
+        address[] memory _outputToOldWantRoute,
         bytes32 _id,
         address _voter
-    ) StrategyCommonChefLP(
+    ) StrategyNewQuick(
         _want,
-        _poolId,
-        _chef,
+        _rewardPool,
+        _quickConverter,
         _vault,
         _unirouter,
         _keeper,
         _strategist,
         _beefyFeeRecipient,
         _outputToNativeRoute,
-        _outputToLp0Route,
-        _outputToLp1Route
+        _outputToWantRoute,
+        _outputToOldWantRoute
     ) DelegateManagerCommon(_id, _voter) public {}
 
-    function beforeDeposit() external virtual override(StratManager, StrategyCommonChefLP) {
+    function beforeDeposit() external virtual override(StratManager, StrategyNewQuick) {
         if (harvestOnDeposit) {
             require(msg.sender == vault, "!vault");
             _harvest(tx.origin);

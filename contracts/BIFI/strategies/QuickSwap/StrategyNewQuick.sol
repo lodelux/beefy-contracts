@@ -7,13 +7,13 @@ import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 
 import "../../interfaces/common/IUniswapRouterETH.sol";
-import "../../interfaces/spooky/IXPool.sol";
-import "../../interfaces/spooky/IXChef.sol";
+import "../../interfaces/common/IUniswapV2Pair.sol";
+import "../../interfaces/common/IRewardPool.sol";
+import "../../interfaces/quick/IQuickConverter.sol";
 import "../Common/StratManager.sol";
 import "../Common/FeeManager.sol";
-import "../../utils/GasThrottler.sol";
 
-contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
+contract StrategyNewQuick is StratManager, FeeManager {
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
 
@@ -21,15 +21,17 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
     address public native;
     address public output;
     address public want;
+    address public oldWant;
 
     // Third party contracts
-    address public xChef;
-    uint256 public pid;
-    address public xWant;
+    address public rewardPool;
+    address public quickConverter;
+    bool public convert = true;
 
     // Routes
     address[] public outputToNativeRoute;
     address[] public outputToWantRoute;
+    address[] public outputToOldWantRoute;
 
     bool public harvestOnDeposit;
     uint256 public lastHarvest;
@@ -38,33 +40,35 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
     event Deposit(uint256 tvl);
     event Withdraw(uint256 tvl);
     event ChargedFees(uint256 callFees, uint256 beefyFees, uint256 strategistFees);
-    event SwapXChefPool(uint256 pid);
 
     constructor(
         address _want,
-        address _xWant,
-        uint256 _pid,
-        address _xChef,
+        address _rewardPool,
+        address _quickConverter,
         address _vault,
         address _unirouter,
         address _keeper,
         address _strategist,
         address _beefyFeeRecipient,
         address[] memory _outputToNativeRoute,
-        address[] memory _outputToWantRoute
+        address[] memory _outputToWantRoute,
+        address[] memory _outputToOldWantRoute
     ) StratManager(_keeper, _strategist, _unirouter, _vault, _beefyFeeRecipient) public {
         want = _want;
-        xWant = _xWant;
-        pid = _pid;
-        xChef = _xChef;
+        rewardPool = _rewardPool;
+        quickConverter = _quickConverter;
 
         output = _outputToNativeRoute[0];
         native = _outputToNativeRoute[_outputToNativeRoute.length - 1];
+        oldWant = _outputToOldWantRoute[_outputToOldWantRoute.length - 1];
         outputToNativeRoute = _outputToNativeRoute;
 
         require(_outputToWantRoute[0] == output, "toDeposit[0] != output");
         require(_outputToWantRoute[_outputToWantRoute.length - 1] == want, "!want");
         outputToWantRoute = _outputToWantRoute;
+
+        require(_outputToOldWantRoute[0] == output, "toOldWant[0] != output");
+        outputToOldWantRoute = _outputToOldWantRoute;
 
         _giveAllowances();
     }
@@ -74,10 +78,8 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
         uint256 wantBal = balanceOfWant();
 
         if (wantBal > 0) {
-            IXPool(xWant).enter(wantBal);
-            uint256 xWantBal = balanceOfXWant();
-            IXChef(xChef).deposit(pid, xWantBal);
-            emit Deposit(balanceOf());
+            IRewardPool(rewardPool).stake(wantBal);
+            emit Deposit(wantBal);
         }
     }
 
@@ -85,12 +87,9 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
         require(msg.sender == vault, "!vault");
 
         uint256 wantBal = balanceOfWant();
-        uint256 xWantBal = IXPool(xWant).BOOForxBOO(wantBal);
-        uint256 xAmount = IXPool(xWant).BOOForxBOO(_amount);
 
         if (wantBal < _amount) {
-            IXChef(xChef).withdraw(pid, xAmount.sub(xWantBal));
-            IXPool(xWant).leave(xAmount.sub(xWantBal));
+            IRewardPool(rewardPool).withdraw(_amount.sub(wantBal));
             wantBal = balanceOfWant();
         }
 
@@ -115,11 +114,11 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
         }
     }
 
-    function harvest() external gasThrottle virtual {
+    function harvest() external virtual {
         _harvest(tx.origin);
     }
 
-    function harvest(address callFeeRecipient) external gasThrottle virtual {
+    function harvest(address callFeeRecipient) external virtual {
         _harvest(callFeeRecipient);
     }
 
@@ -129,7 +128,8 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
 
     // compounds earnings and charges performance fee
     function _harvest(address callFeeRecipient) internal whenNotPaused {
-        IXChef(xChef).deposit(pid, 0);
+        IRewardPool(rewardPool).getReward();
+
         uint256 outputBal = IERC20(output).balanceOf(address(this));
         if (outputBal > 0) {
             chargeFees(callFeeRecipient);
@@ -144,14 +144,10 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
 
     // performance fees
     function chargeFees(address callFeeRecipient) internal {
-        uint256 nativeBal;
-        if (output != native) {
-            uint256 toNative = IERC20(output).balanceOf(address(this)).mul(45).div(1000);
-            IUniswapRouterETH(unirouter).swapExactTokensForTokens(toNative, 0, outputToNativeRoute, address(this), now);
-            nativeBal = IERC20(native).balanceOf(address(this));
-        } else {
-            nativeBal = IERC20(native).balanceOf(address(this)).mul(45).div(1000);
-        }
+        uint256 toNative = IERC20(output).balanceOf(address(this)).mul(45).div(1000);
+        IUniswapRouterETH(unirouter).swapExactTokensForTokens(toNative, 0, outputToNativeRoute, address(this), now);
+
+        uint256 nativeBal = IERC20(native).balanceOf(address(this));
 
         uint256 callFeeAmount = nativeBal.mul(callFee).div(MAX_FEE);
         IERC20(native).safeTransfer(callFeeRecipient, callFeeAmount);
@@ -165,11 +161,17 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
         emit ChargedFees(callFeeAmount, beefyFeeAmount, strategistFeeAmount);
     }
 
-    // swap rewards to {want}
+    // swap rewards to want
     function swapRewards() internal {
         if (want != output) {
             uint256 outputBal = IERC20(output).balanceOf(address(this));
-            IUniswapRouterETH(unirouter).swapExactTokensForTokens(outputBal, 0, outputToWantRoute, address(this), block.timestamp);
+            if (convert) {
+                IUniswapRouterETH(unirouter).swapExactTokensForTokens(outputBal, 0, outputToOldWantRoute, address(this), now);
+                uint256 oldWantBal = IERC20(oldWant).balanceOf(address(this));
+                IQuickConverter(quickConverter).quickToQuickX(oldWantBal);
+            } else {
+                IUniswapRouterETH(unirouter).swapExactTokensForTokens(outputBal, 0, outputToWantRoute, address(this), now);
+            }
         }
     }
 
@@ -183,71 +185,52 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
         return IERC20(want).balanceOf(address(this));
     }
 
-    // it calculates how much 'xWant' this contract holds.
-    function balanceOfXWant() public view returns (uint256) {
-        return IERC20(xWant).balanceOf(address(this));
-    }
-
     // it calculates how much 'want' the strategy has working in the farm.
     function balanceOfPool() public view returns (uint256) {
-        (uint256 xWantBal,) = IXChef(xChef).userInfo(pid, address(this));
-        return IXPool(xWant).xBOOForBOO(xWantBal);
+        return IRewardPool(rewardPool).balanceOf(address(this));
     }
 
-    // it calculates how much 'xWant' the strategy has working in the farm.
-    function balanceOfXPool() public view returns (uint256) {
-        (uint256 xWantBal,) = IXChef(xChef).userInfo(pid, address(this));
-        return xWantBal;
-    }
-
+    // returns rewards unharvested
     function rewardsAvailable() public view returns (uint256) {
-       return IXChef(xChef).pendingReward(pid, address(this));
+        return IRewardPool(rewardPool).earned(address(this));
     }
 
+    // native reward amount for calling harvest
     function callReward() public view returns (uint256) {
         uint256 outputBal = rewardsAvailable();
         uint256 nativeOut;
-
-        if (output != native) {
-            uint256[] memory amountsOut = IUniswapRouterETH(unirouter).getAmountsOut(outputBal, outputToNativeRoute);
-            nativeOut = amountsOut[amountsOut.length - 1].mul(45).div(1000).mul(callFee).div(MAX_FEE);
-        } else {
-            nativeOut = outputBal.mul(45).div(1000).mul(callFee).div(MAX_FEE);
+        if (outputBal > 0) {
+            uint256[] memory amountOut = IUniswapRouterETH(unirouter).getAmountsOut(outputBal, outputToNativeRoute);
+            nativeOut = amountOut[amountOut.length -1];
         }
 
-        return nativeOut;
-    }
-
-    function setHarvestOnDeposit(bool _harvestOnDeposit) external onlyManager {
-        harvestOnDeposit = _harvestOnDeposit;
-
-        if (harvestOnDeposit) {
-            setWithdrawalFee(0);
-        } else {
-            setWithdrawalFee(10);
-        }
-    }
-
-    function setShouldGasThrottle(bool _shouldGasThrottle) external onlyManager {
-        shouldGasThrottle = _shouldGasThrottle;
+        return nativeOut.mul(45).div(1000).mul(callFee).div(MAX_FEE);
     }
 
     // called as part of strat migration. Sends all the available funds back to the vault.
     function retireStrat() external {
         require(msg.sender == vault, "!vault");
 
-        IXChef(xChef).withdraw(pid, balanceOfXPool());
-        IXPool(xWant).leave(balanceOfXWant());
+        IRewardPool(rewardPool).withdraw(balanceOfPool());
 
         uint256 wantBal = balanceOfWant();
         IERC20(want).transfer(vault, wantBal);
     }
 
+    function setHarvestOnDeposit(bool _harvestOnDeposit) external onlyManager {
+        harvestOnDeposit = _harvestOnDeposit;
+
+        if (harvestOnDeposit == true) {
+            super.setWithdrawalFee(0);
+        } else {
+            super.setWithdrawalFee(10);
+        }
+    }
+
     // pauses deposits and withdraws all funds from third party systems.
     function panic() public onlyManager {
         pause();
-        IXChef(xChef).withdraw(pid, balanceOfXPool());
-        IXPool(xWant).leave(balanceOfXWant());
+        IRewardPool(rewardPool).withdraw(balanceOfPool());
     }
 
     function pause() public onlyManager {
@@ -264,18 +247,6 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
         deposit();
     }
 
-    function _giveAllowances() internal {
-        IERC20(want).safeApprove(xWant, uint256(-1));
-        IERC20(xWant).safeApprove(xChef, uint256(-1));
-        IERC20(output).safeApprove(unirouter, uint256(-1));
-    }
-
-    function _removeAllowances() internal {
-        IERC20(want).safeApprove(xWant, 0);
-        IERC20(xWant).safeApprove(xChef, 0);
-        IERC20(output).safeApprove(unirouter, 0);
-    }
-
     function outputToNative() public view returns (address[] memory) {
         return outputToNativeRoute;
     }
@@ -284,24 +255,53 @@ contract StrategyXSyrup is StratManager, FeeManager, GasThrottler {
         return outputToWantRoute;
     }
 
-    function swapXChefPool(uint256 _pid, address[] memory _outputToNativeRoute, address[] memory _outputToWantRoute) external onlyOwner {
-        (address _output,,,,,,,,,) = IXChef(xChef).poolInfo(_pid);
+    function outputToOldWant() public view returns (address[] memory) {
+        return outputToWantRoute;
+    }
 
-        require((_output == _outputToNativeRoute[0]) && (_output == _outputToWantRoute[0]), "Proposed output in route is not valid");
-        require(_outputToNativeRoute[_outputToNativeRoute.length - 1] == native, "Proposed native in route is not valid");
+    function _giveAllowances() internal {
+        IERC20(want).safeApprove(rewardPool, uint256(-1));
+        IERC20(output).safeApprove(unirouter, uint256(-1));
+        IERC20(oldWant).safeApprove(quickConverter, uint256(-1));
+    }
+
+    function _removeAllowances() internal {
+        IERC20(want).safeApprove(rewardPool, 0);
+        IERC20(output).safeApprove(unirouter, 0);
+        IERC20(oldWant).safeApprove(quickConverter, 0);
+    }
+
+    function setConvert(bool _convert) external onlyManager {
+        convert = _convert;
+
+        if (convert) {
+            IERC20(oldWant).safeApprove(quickConverter, 0);
+            IERC20(oldWant).safeApprove(quickConverter, uint256(-1));
+        } else {
+            IERC20(oldWant).safeApprove(quickConverter, 0);
+        }
+    }
+
+    function swapRewardPool(
+        address _rewardPool,
+        address[] memory _outputToNativeRoute,
+        address[] memory _outputToWantRoute
+    ) external onlyOwner {
+        require(want == IRewardPool(_rewardPool).stakingToken(), "Proposal not valid for this Vault");
+        require((_outputToNativeRoute[0] == IRewardPool(_rewardPool).rewardsToken())
+            && (_outputToWantRoute[0] == IRewardPool(_rewardPool).rewardsToken()),
+            "Proposed output in route is not valid");
         require(_outputToWantRoute[_outputToWantRoute.length - 1] == want, "Proposed want in route is not valid");
 
-        _harvest(tx.origin);
-        IXChef(xChef).emergencyWithdraw(pid);
-        IERC20(output).safeApprove(unirouter, 0);
+        IRewardPool(rewardPool).withdraw(balanceOfPool());
+        _removeAllowances();
 
-        pid = _pid;
-        output = _output;
+        rewardPool = _rewardPool;
+        output = _outputToNativeRoute[0];
         outputToNativeRoute = _outputToNativeRoute;
         outputToWantRoute = _outputToWantRoute;
 
-        IERC20(output).safeApprove(unirouter, uint256(-1));
-        IXChef(xChef).deposit(pid, balanceOfXWant());
-        emit SwapXChefPool(pid);
+        _giveAllowances();
+        IRewardPool(rewardPool).stake(balanceOfWant());
     }
 }
