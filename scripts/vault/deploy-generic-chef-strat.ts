@@ -9,48 +9,41 @@ import { BeefyChain } from "../../utils/beefyChain";
 const registerSubsidy = require("../../utils/registerSubsidy");
 
 const {
-  platforms: {  pancake, beefyfinance },
+  platforms: { pangolin, beefyfinance },
   tokens: {
-    BNB: { address: BNB },
-    CAKE: { address: CAKE },
-    DAI: { address: DAI },
-    BUSD: { address: BUSD },
-    USDT: { address: USDT },
-    USDC: { address: USDC },
-    LINK: { address: LINK},
-    SXP: { address: SXP }
+    WAVAX: { address: WAVAX },
+    PNG: { address: PNG },
+    KLO: { address: KLO },
   },
-} = addressBook.bsc;
+} = addressBook.avax;
 
 const shouldVerifyOnEtherscan = false;
 
-const want = web3.utils.toChecksumAddress("0x0eD7e52944161450477ee417DE9Cd3a859b14fD0");
-const ensId = ethers.utils.formatBytes32String("cake.eth");
+const want = web3.utils.toChecksumAddress("0x6745d7F9289d7d75B5121876B1b9D8DA775c9a3E");
 
 const vaultParams = {
-  mooName: "Moo Test",
-  mooSymbol: "mooTest",
+  mooName: "Moo Pangolin KLO-AVAX",
+  mooSymbol: "mooPngKloAvax",
   delay: 21600,
 };
 
 const strategyParams = {
   want,
-  poolId: 2,
-  chef: "0xa5f8C5Dbd5F286960b9d90548680aE5ebFf07652", //pancake.masterchef,
-  unirouter: pancake.router,
-  strategist: "0x4cC72219fc8aEF162FC0c255D9B9C3Ff93B10882", // some address
+  poolId: 12,
+  unirouter: pangolin.router,
+  strategist: "0xc75E1B127E288f1a33606a52AB5C91BBe64EaAfe", // some address
   keeper: beefyfinance.keeper,
   beefyFeeRecipient: beefyfinance.beefyFeeRecipient,
-  outputToNativeRoute: [CAKE, BNB],
-  outputToLp0Route: [CAKE],
-  outputToLp1Route: [CAKE, BNB],
-  ensId
- // pendingRewardsFunctionName: "pendingTri", // used for rewardsAvailable(), use correct function name from masterchef
+  outputToNativeRoute: [PNG, WAVAX],
+  nativeToLp0Route: [WAVAX, KLO],
+  nativeToLp1Route: [WAVAX],
+  rewardToNativeRoutes: [[KLO, WAVAX]],
+  // pendingRewardsFunctionName: "pendingTri", // used for rewardsAvailable(), use correct function name from masterchef
 };
 
 const contractNames = {
   vault: "BeefyVaultV6",
-  strategy: "StrategyCommonChefLPVoter",
+  strategy: "StrategyPangolinMultiRewardsLP",
 };
 
 async function main() {
@@ -68,7 +61,7 @@ async function main() {
   const Vault = await ethers.getContractFactory(contractNames.vault);
   const Strategy = await ethers.getContractFactory(contractNames.strategy);
 
-  const [deployer] = await ethers.getSigners();
+  const [deployer, other] = await ethers.getSigners();
 
   console.log("Deploying:", vaultParams.mooName);
 
@@ -86,16 +79,15 @@ async function main() {
   const strategyConstructorArguments = [
     strategyParams.want,
     strategyParams.poolId,
-    strategyParams.chef,
     vault.address,
     strategyParams.unirouter,
     strategyParams.keeper,
     strategyParams.strategist,
     strategyParams.beefyFeeRecipient,
     strategyParams.outputToNativeRoute,
-    strategyParams.outputToLp0Route,
-    strategyParams.outputToLp1Route,
-    strategyParams.ensId
+    strategyParams.rewardToNativeRoutes,
+    strategyParams.nativeToLp0Route,
+    strategyParams.nativeToLp1Route,
   ];
   const strategy = await Strategy.deploy(...strategyConstructorArguments);
   await strategy.deployed();
@@ -118,10 +110,11 @@ async function main() {
       verifyContract(strategy.address, strategyConstructorArguments)
     );
   }
- // await setPendingRewardsFunctionName(strategy, strategyParams.pendingRewardsFunctionName);
-  await setCorrectCallFee(strategy, hardhat.network.name as BeefyChain);
-  console.log(`Transfering Vault Owner to ${beefyfinance.vaultOwner}`)
-  await vault.transferOwnership(beefyfinance.vaultOwner);
+  // await setPendingRewardsFunctionName(strategy, strategyParams.pendingRewardsFunctionName);
+  await setCorrectCallFee(strategy, "avax" as BeefyChain);
+  // console.log(`Transfering Vault Owner to ${beefyfinance.vaultOwner}`);
+  // await vault.transferOwnership(beefyfinance.vaultOwner);
+  // await strategy.transferOwnership(beefyfinance.strategyOwner);
   console.log();
 
   await Promise.all(verifyContractsPromises);
