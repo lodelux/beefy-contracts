@@ -42,13 +42,16 @@ contract StrategyCurveLP is StratManager, FeeManager, GasThrottler {
     bool public crvEnabled = true;
     address public crvRouter;
 
+    // if depositToken should be sent as unwrapped native
+    bool public depositNative;
+
     bool public harvestOnDeposit;
     uint256 public lastHarvest;
 
-    /**
-     * @dev Event that is fired each time someone harvests the strat.
-     */
-    event StratHarvest(address indexed harvester);
+    event StratHarvest(address indexed harvester, uint256 wantHarvested, uint256 tvl);
+    event Deposit(uint256 tvl);
+    event Withdraw(uint256 tvl);
+    event ChargedFees(uint256 callFees, uint256 beefyFees, uint256 strategistFees);
 
     constructor(
         address _want,
@@ -99,6 +102,7 @@ contract StrategyCurveLP is StratManager, FeeManager, GasThrottler {
 
         if (wantBal > 0) {
             IRewardsGauge(rewardsGauge).deposit(wantBal);
+            emit Deposit(balanceOf());
         }
     }
 
@@ -122,6 +126,8 @@ contract StrategyCurveLP is StratManager, FeeManager, GasThrottler {
             uint256 withdrawalFeeAmount = wantBal.mul(withdrawalFee).div(WITHDRAWAL_MAX);
             IERC20(want).safeTransfer(vault, wantBal.sub(withdrawalFeeAmount));
         }
+
+        emit Withdraw(balanceOf());
     }
 
     function beforeDeposit() external override {
@@ -150,9 +156,10 @@ contract StrategyCurveLP is StratManager, FeeManager, GasThrottler {
         if (nativeBal > 0 || crvBal > 0) {
             chargeFees();
             addLiquidity();
+            uint256 wantHarvested = balanceOfWant();
             deposit();
             lastHarvest = block.timestamp;
-            emit StratHarvest(msg.sender);
+            emit StratHarvest(msg.sender, wantHarvested, balanceOf());
         }
     }
 
@@ -173,6 +180,8 @@ contract StrategyCurveLP is StratManager, FeeManager, GasThrottler {
 
         uint256 strategistFee = nativeFeeBal.mul(STRATEGIST_FEE).div(MAX_FEE);
         IERC20(native).safeTransfer(strategist, strategistFee);
+
+        emit ChargedFees(callFeeAmount, beefyFeeAmount, strategistFee);
     }
 
     // Adds liquidity to AMM and gets more LP tokens.
@@ -185,8 +194,10 @@ contract StrategyCurveLP is StratManager, FeeManager, GasThrottler {
             depositBal = IERC20(depositToken).balanceOf(address(this));
         } else {
             depositBal = nativeBal;
-            depositNativeAmount = nativeBal;
-            IWrappedNative(native).withdraw(depositNativeAmount);
+            if (depositNative) {
+                depositNativeAmount = nativeBal;
+                IWrappedNative(native).withdraw(depositNativeAmount);
+            }
         }
 
         if (poolSize == 2) {
@@ -247,6 +258,10 @@ contract StrategyCurveLP is StratManager, FeeManager, GasThrottler {
         crvToNativeRoute = _crvToNative;
         crvRouter = _router;
         _giveAllowances();
+    }
+
+    function setDepositNative(bool _depositNative) external onlyOwner {
+        depositNative = _depositNative;
     }
 
     function setHarvestOnDeposit(bool _harvestOnDeposit) external onlyManager {
