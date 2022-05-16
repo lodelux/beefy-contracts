@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 import { addressBook } from "blockchain-addressbook";
+import { ethers } from "hardhat";
 import { chainCallFeeMap } from "../../utils/chainCallFeeMap";
 
 const { zapNativeToToken, getVaultWant, unpauseIfPaused, getUnirouterData } = require("../../utils/testHelpers");
@@ -12,7 +13,7 @@ const chainData = addressBook[chainName];
 const { beefyfinance } = chainData.platforms;
 
 const config = {
-  vault: "0x42376cd79F916Fdae6225Dd647f154D055165d83",
+  vault: "0x69C2AD8572c475bD4B703c5826eAe878c0ace869",
   vaultContract: "BeefyVaultV6",
   strategyContract: "StrategyCommonChefLP",
   testAmount: ethers.utils.parseEther("5"),
@@ -26,8 +27,12 @@ describe("VaultLifecycleTest", () => {
   let vault, strategy, unirouter, want, deployer, keeper, other;
 
   beforeEach(async () => {
-    [deployer, keeper, other] = await ethers.getSigners();
-
+    [deployer, other] = await ethers.getSigners();
+    await hre.network.provider.request({
+      method: "hardhat_impersonateAccount",
+      params: [beefyfinance.keeper],
+    });
+    keeper = await ethers.getSigner(beefyfinance.keeper);
     vault = await ethers.getContractAt(config.vaultContract, config.vault);
     const strategyAddr = await vault.strategy();
     strategy = await ethers.getContractAt(config.strategyContract, strategyAddr);
@@ -74,20 +79,20 @@ describe("VaultLifecycleTest", () => {
     const vaultBal = await vault.balance();
     const pricePerShare = await vault.getPricePerFullShare();
     await delay(5000);
-  //  const callRewardBeforeHarvest = await strategy.callReward();
-  //  expect(callRewardBeforeHarvest).to.be.gt(0);
+    //  const callRewardBeforeHarvest = await strategy.callReward();
+    //  expect(callRewardBeforeHarvest).to.be.gt(0);
     await strategy.connect(keeper).managerHarvest();
     const vaultBalAfterHarvest = await vault.balance();
     const pricePerShareAfterHarvest = await vault.getPricePerFullShare();
-  //  const callRewardAfterHarvest = await strategy.callReward();
+    //  const callRewardAfterHarvest = await strategy.callReward();
 
     await vault.withdrawAll();
     const wantBalFinal = await want.balanceOf(deployer.address);
 
     expect(vaultBalAfterHarvest).to.be.gt(vaultBal);
     expect(pricePerShareAfterHarvest).to.be.gt(pricePerShare);
-  //  expect(callRewardBeforeHarvest).to.be.gt(callRewardAfterHarvest);
-    
+    //  expect(callRewardBeforeHarvest).to.be.gt(callRewardAfterHarvest);
+
     expect(wantBalFinal).to.be.gt(wantBalStart.mul(99).div(100));
 
     const lastHarvest = await strategy.lastHarvest();
@@ -165,41 +170,55 @@ describe("VaultLifecycleTest", () => {
 
   it("Displays routing correctly", async () => {
     const { tokenAddressMap } = addressBook[chainName];
-
-    // outputToLp0Route
-    console.log("outputToLp0Route:");
-    for (let i = 0; i < 10; ++i) {
+    console.log("outputToNative:");
+    for (let i = 0; i < 2; i++) {
       try {
-        const tokenAddress = await strategy.outputToLp0Route(i);
+        const tokenAddress = await strategy.outputToNativeRoute(i);
         if (tokenAddress in tokenAddressMap) {
           console.log(tokenAddressMap[tokenAddress]);
         } else {
           console.log(tokenAddress);
         }
       } catch {
-        // reached end
-        if (i == 0) {
-          console.log("No routing, output must be lp0");
-        }
         break;
       }
     }
-
-    // outputToLp1Route
-    console.log("outputToLp1Route:");
-    for (let i = 0; i < 10; ++i) {
+    console.log("secondOutputToNative:");
+    for (let i = 0; i < 2; i++) {
       try {
-        const tokenAddress = await strategy.outputToLp1Route(i);
+        const tokenAddress = await strategy.secondOutputToNativeRoute(i);
         if (tokenAddress in tokenAddressMap) {
-          console.log(tokenAddressMap[tokenAddress].symbol);
+          console.log(tokenAddressMap[tokenAddress]);
         } else {
           console.log(tokenAddress);
         }
       } catch {
-        // reached end
-        if (i == 0) {
-          console.log("No routing, output must be lp1");
+        break;
+      }
+    }
+    console.log("nativeToLp0:");
+    for (let i = 0; i < 2; i++) {
+      try {
+        const tokenAddress = await strategy.nativeToLp0Route(i);
+        if (tokenAddress in tokenAddressMap) {
+          console.log(tokenAddressMap[tokenAddress]);
+        } else {
+          console.log(tokenAddress);
         }
+      } catch {
+        break;
+      }
+    }
+    console.log("nativeToLp1:");
+    for (let i = 0; i < 2; i++) {
+      try {
+        const tokenAddress = await strategy.nativeToLp1Route(i);
+        if (tokenAddress in tokenAddressMap) {
+          console.log(tokenAddressMap[tokenAddress]);
+        } else {
+          console.log(tokenAddress);
+        }
+      } catch {
         break;
       }
     }
@@ -209,7 +228,7 @@ describe("VaultLifecycleTest", () => {
     const callFee = await strategy.callFee();
 
     const expectedCallFee = chainCallFeeMap[chainName];
-    const actualCallFee = parseInt(callFee)
+    const actualCallFee = parseInt(callFee);
 
     expect(actualCallFee).to.equal(expectedCallFee);
   }).timeout(TIMEOUT);
@@ -219,7 +238,7 @@ describe("VaultLifecycleTest", () => {
 
     const withdrawalFee = await strategy.withdrawalFee();
     const actualWithdrawalFee = parseInt(withdrawalFee);
-    if(harvestOnDeposit) {
+    if (harvestOnDeposit) {
       expect(actualWithdrawalFee).to.equal(0);
     } else {
       expect(actualWithdrawalFee).not.to.equal(0);
