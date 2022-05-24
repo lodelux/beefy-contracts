@@ -6,14 +6,15 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 
-import "../../interfaces/kyber/IDMMRouter.sol";
-import "../../interfaces/common/IUniswapRouterETH.sol";
-import "../../interfaces/kyber/IElysianFields.sol";
-import "../../interfaces/curve/ICurveSwap.sol";
+import "../../interfaces/valleyswap/IValleySwapRouter.sol";
+import "../../interfaces/valleyswap/IValleySwapLibrary.sol";
+import "../../interfaces/valleyswap/IValleySwapFarm.sol";
+import "../../interfaces/common/IUniswapV2Pair.sol";
 import "../Common/StratManager.sol";
 import "../Common/FeeManager.sol";
+import "../../utils/GasThrottler.sol";
 
-contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
+contract StrategyValleySwapLP is StratManager, FeeManager, GasThrottler {
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
 
@@ -21,22 +22,22 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
     address public native;
     address public output;
     address public want;
-    address public stable;
-    address public depositToken;
+    address public lpToken0;
+    address public lpToken1;
 
     // Third party contracts
     address public chef;
     uint256 public poolId;
-    address public quickRouter;
+    address public factory;
+    address public lib = address(0x35Cb221C896CfEbd4Bc6150E6Eb93f8a83E1D395);
 
     bool public harvestOnDeposit;
     uint256 public lastHarvest;
 
     // Routes
-    IERC20[] public outputToStableRoute;
-    address[] public stableToNativeRoute;
-    address[] public stableToDepositRoute;
-    address[] public outputToStablePoolsPath;
+    address[] public outputToNativeRoute;
+    address[] public outputToLp0Route;
+    address[] public outputToLp1Route;
 
     event StratHarvest(address indexed harvester, uint256 wantHarvested, uint256 tvl);
     event Deposit(uint256 tvl);
@@ -49,33 +50,32 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
         address _chef,
         address _vault,
         address _unirouter,
-        address _quickRouter,
         address _keeper,
         address _strategist,
         address _beefyFeeRecipient,
-        address[] memory _outputToStableRoute,
-        address[] memory _stableToNativeRoute,
-        address[] memory _stableToDepositRoute,
-        address[] memory _outputToStablePoolsPath
+        address[] memory _outputToNativeRoute,
+        address[] memory _outputToLp0Route,
+        address[] memory _outputToLp1Route
     ) StratManager(_keeper, _strategist, _unirouter, _vault, _beefyFeeRecipient) public {
         want = _want;
         poolId = _poolId;
         chef = _chef;
-        quickRouter = _quickRouter;
+        factory = IValleySwapRouter(unirouter).factory();
 
-        output = _outputToStableRoute[0];
-        stable = _stableToNativeRoute[0];
-        native = _stableToNativeRoute[_stableToNativeRoute.length - 1];
-        depositToken = _stableToDepositRoute[_stableToDepositRoute.length - 1];
+        output = _outputToNativeRoute[0];
+        native = _outputToNativeRoute[_outputToNativeRoute.length - 1];
+        outputToNativeRoute = _outputToNativeRoute;
 
         // setup lp routing
-        for (uint i = 0; i < _outputToStableRoute.length; i++) {
-            outputToStableRoute.push(IERC20(_outputToStableRoute[i]));
-        }
+        lpToken0 = IUniswapV2Pair(want).token0();
+        require(_outputToLp0Route[0] == output, "outputToLp0Route[0] != output");
+        require(_outputToLp0Route[_outputToLp0Route.length - 1] == lpToken0, "outputToLp0Route[last] != lpToken0");
+        outputToLp0Route = _outputToLp0Route;
 
-        stableToNativeRoute = _stableToNativeRoute;
-        stableToDepositRoute = _stableToDepositRoute;
-        outputToStablePoolsPath = _outputToStablePoolsPath;
+        lpToken1 = IUniswapV2Pair(want).token1();
+        require(_outputToLp1Route[0] == output, "outputToLp1Route[0] != output");
+        require(_outputToLp1Route[_outputToLp1Route.length - 1] == lpToken1, "outputToLp1Route[last] != lpToken1");
+        outputToLp1Route = _outputToLp1Route;
 
         _giveAllowances();
     }
@@ -85,7 +85,7 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
         uint256 wantBal = IERC20(want).balanceOf(address(this));
 
         if (wantBal > 0) {
-            IElysianFields(chef).deposit(poolId, wantBal);
+            IValleySwapFarm(chef).deposit(poolId, wantBal);
             emit Deposit(balanceOf());
         }
     }
@@ -96,7 +96,7 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
         uint256 wantBal = IERC20(want).balanceOf(address(this));
 
         if (wantBal < _amount) {
-            IElysianFields(chef).withdraw(poolId, _amount.sub(wantBal));
+            IValleySwapFarm(chef).withdraw(poolId, _amount.sub(wantBal));
             wantBal = IERC20(want).balanceOf(address(this));
         }
 
@@ -114,24 +114,28 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
         emit Withdraw(balanceOf());
     }
 
-    function beforeDeposit() external override {
+    function beforeDeposit() external virtual override {
         if (harvestOnDeposit) {
             require(msg.sender == vault, "!vault");
             _harvest(tx.origin);
         }
     }
 
-    function harvest() external virtual {
+    function harvest() external gasThrottle virtual {
         _harvest(tx.origin);
     }
 
-    function harvest(address callFeeRecipient) external virtual {
+    function harvest(address callFeeRecipient) external gasThrottle virtual {
         _harvest(callFeeRecipient);
+    }
+
+    function managerHarvest() external onlyManager {
+        _harvest(tx.origin);
     }
 
     // compounds earnings and charges performance fee
     function _harvest(address callFeeRecipient) internal whenNotPaused {
-        IElysianFields(chef).deposit(poolId, 0);
+        IValleySwapFarm(chef).deposit(poolId, 0);
         uint256 outputBal = IERC20(output).balanceOf(address(this));
         if (outputBal > 0) {
             chargeFees(callFeeRecipient);
@@ -145,13 +149,9 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
     }
 
     // performance fees
-    // no direct route from output to native, so swap output to want then withdraw stable and swap to native
     function chargeFees(address callFeeRecipient) internal {
-        uint256 toStable = IERC20(output).balanceOf(address(this)).mul(45).div(1000);
-        IDMMRouter(unirouter).swapExactTokensForTokens(toStable, 0, outputToStablePoolsPath, outputToStableRoute, address(this), now);
-
-        uint256 toNative = IERC20(stable).balanceOf(address(this));
-        IUniswapRouterETH(quickRouter).swapExactTokensForTokens(toNative, 0, stableToNativeRoute, address(this), now);
+        uint256 toNative = IERC20(output).balanceOf(address(this)).mul(45).div(1000);
+        IValleySwapRouter(unirouter).swapExactTokensForTokens(toNative, 0, outputToNativeRoute, address(this), now);
 
         uint256 nativeBal = IERC20(native).balanceOf(address(this));
 
@@ -169,17 +169,19 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
 
     // Adds liquidity to AMM and gets more LP tokens.
     function addLiquidity() internal {
-        uint256 outputBal = IERC20(output).balanceOf(address(this));
-        IDMMRouter(unirouter).swapExactTokensForTokens(outputBal, 0, outputToStablePoolsPath, outputToStableRoute, address(this), now);
+        uint256 outputHalf = IERC20(output).balanceOf(address(this)).div(2);
 
-        uint256 toDeposit = IERC20(stable).balanceOf(address(this));
-        IUniswapRouterETH(quickRouter).swapExactTokensForTokens(toDeposit, 0, stableToDepositRoute, address(this), now);
+        if (lpToken0 != output) {
+            IValleySwapRouter(unirouter).swapExactTokensForTokens(outputHalf, 0, outputToLp0Route, address(this), now);
+        }
 
-        uint256 depositBal = IERC20(depositToken).balanceOf(address(this));
+        if (lpToken1 != output) {
+            IValleySwapRouter(unirouter).swapExactTokensForTokens(outputHalf, 0, outputToLp1Route, address(this), now);
+        }
 
-        uint256[2] memory amounts;
-        amounts[1] = depositBal;
-        ICurveSwap(want).add_liquidity(amounts, 1);
+        uint256 lp0Bal = IERC20(lpToken0).balanceOf(address(this));
+        uint256 lp1Bal = IERC20(lpToken1).balanceOf(address(this));
+        IValleySwapRouter(unirouter).addLiquidity(lpToken0, lpToken1, lp0Bal, lp1Bal, 1, 1, address(this), now);
     }
 
     // calculate the total underlaying 'want' held by the strat.
@@ -194,22 +196,23 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
 
     // it calculates how much 'want' the strategy has working in the farm.
     function balanceOfPool() public view returns (uint256) {
-        (uint256 _amount,) = IElysianFields(chef).userInfo(poolId, address(this));
+        (uint256 _amount,) = IValleySwapFarm(chef).userInfo(poolId, address(this));
         return _amount;
     }
 
     // returns rewards unharvested
     function rewardsAvailable() public view returns (uint256) {
-        return IElysianFields(chef).pendingRwd(poolId, address(this));
+        return IValleySwapFarm(chef).pendingVS(poolId, address(this));
     }
 
     // native reward amount for calling harvest
     function callReward() public view returns (uint256) {
         uint256 outputBal = rewardsAvailable();
-        uint256[] memory amountOutFromOutput = IDMMRouter(unirouter).getAmountsOut(outputBal, outputToStablePoolsPath, outputToStableRoute);
-        uint256 stableOut = amountOutFromOutput[amountOutFromOutput.length -1];
-        uint256[] memory amountOutFromStable = IUniswapRouterETH(quickRouter).getAmountsOut(stableOut, stableToNativeRoute);
-        uint256 nativeOut = amountOutFromStable[amountOutFromStable.length -1];
+        uint256 nativeOut;
+        if (outputBal > 0) {
+            uint256[] memory amountOut = IValleySwapLibrary(lib).getAmountsOut(factory, outputBal, outputToNativeRoute);
+            nativeOut = amountOut[amountOut.length -1];
+        }
 
         return nativeOut.mul(45).div(1000).mul(callFee).div(MAX_FEE);
     }
@@ -224,11 +227,15 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
         }
     }
 
+    function setShouldGasThrottle(bool _shouldGasThrottle) external onlyManager {
+        shouldGasThrottle = _shouldGasThrottle;
+    }
+
     // called as part of strat migration. Sends all the available funds back to the vault.
     function retireStrat() external {
         require(msg.sender == vault, "!vault");
 
-        IElysianFields(chef).emergencyWithdraw(poolId);
+        IValleySwapFarm(chef).emergencyWithdraw(poolId);
 
         uint256 wantBal = IERC20(want).balanceOf(address(this));
         IERC20(want).transfer(vault, wantBal);
@@ -237,7 +244,7 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
     // pauses deposits and withdraws all funds from third party systems.
     function panic() public onlyManager {
         pause();
-        IElysianFields(chef).emergencyWithdraw(poolId);
+        IValleySwapFarm(chef).emergencyWithdraw(poolId);
     }
 
     function pause() public onlyManager {
@@ -257,30 +264,30 @@ contract StrategyKyberCurve2Jpy is StratManager, FeeManager {
     function _giveAllowances() internal {
         IERC20(want).safeApprove(chef, uint256(-1));
         IERC20(output).safeApprove(unirouter, uint256(-1));
-        IERC20(stable).safeApprove(quickRouter, uint256(-1));
-        IERC20(depositToken).safeApprove(want, uint256(-1));
+
+        IERC20(lpToken0).safeApprove(unirouter, 0);
+        IERC20(lpToken0).safeApprove(unirouter, uint256(-1));
+
+        IERC20(lpToken1).safeApprove(unirouter, 0);
+        IERC20(lpToken1).safeApprove(unirouter, uint256(-1));
     }
 
     function _removeAllowances() internal {
         IERC20(want).safeApprove(chef, 0);
         IERC20(output).safeApprove(unirouter, 0);
-        IERC20(stable).safeApprove(quickRouter, 0);
-        IERC20(depositToken).safeApprove(want, 0);
+        IERC20(lpToken0).safeApprove(unirouter, 0);
+        IERC20(lpToken1).safeApprove(unirouter, 0);
     }
 
-    function outputToStable() external view returns (IERC20[] memory) {
-        return outputToStableRoute;
+    function outputToNative() external view returns (address[] memory) {
+        return outputToNativeRoute;
     }
 
-    function stableToNative() external view returns (address[] memory) {
-        return stableToNativeRoute;
+    function outputToLp0() external view returns (address[] memory) {
+        return outputToLp0Route;
     }
 
-    function stableToDeposit() external view returns (address[] memory) {
-        return stableToDepositRoute;
-    }
-
-    function outputToStablePools() external view returns (address[] memory) {
-        return outputToStablePoolsPath;
+    function outputToLp1() external view returns (address[] memory) {
+        return outputToLp1Route;
     }
 }
