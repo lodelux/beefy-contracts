@@ -9,41 +9,43 @@ import { BeefyChain } from "../../utils/beefyChain";
 const registerSubsidy = require("../../utils/registerSubsidy");
 
 const {
-  platforms: { pangolin, beefyfinance },
+  platforms: { beamswap, beefyfinance },
   tokens: {
-    WAVAX: { address: WAVAX },
-    PNG: { address: PNG },
-    KLO: { address: KLO },
+    WGLMR: { address: WGLMR },
+    GLINT: { address: GLINT },
+    xcDOT: { address: xcDOT },
+    USDCs: { address: USDCs },
   },
-} = addressBook.avax;
+} = addressBook.moonbeam;
 
-const shouldVerifyOnEtherscan = false;
+const shouldVerifyOnEtherscan = true;
 
-const want = web3.utils.toChecksumAddress("0x6745d7F9289d7d75B5121876B1b9D8DA775c9a3E");
+const want = web3.utils.toChecksumAddress("0x6Ba38f006aFe746B9A0d465e53aB4182147AC3D7");
 
 const vaultParams = {
-  mooName: "Moo Pangolin KLO-AVAX",
-  mooSymbol: "mooPngKloAvax",
+  mooName: "Moo Beam USDCmad-WGLMR",
+  mooSymbol: "mooBeamWUSDCmad-WGLMR",
   delay: 21600,
 };
 
 const strategyParams = {
   want,
-  poolId: 12,
-  unirouter: pangolin.router,
+  poolId: 15,
+  masterchef: beamswap.masterchef,
+  unirouter: beamswap.router,
   strategist: "0xc75E1B127E288f1a33606a52AB5C91BBe64EaAfe", // some address
   keeper: beefyfinance.keeper,
   beefyFeeRecipient: beefyfinance.beefyFeeRecipient,
-  outputToNativeRoute: [PNG, WAVAX],
-  nativeToLp0Route: [WAVAX, KLO],
-  nativeToLp1Route: [WAVAX],
-  rewardToNativeRoutes: [[KLO, WAVAX]],
-  // pendingRewardsFunctionName: "pendingTri", // used for rewardsAvailable(), use correct function name from masterchef
+  outputToNativeRoute: [GLINT, WGLMR],
+  outputToLp0Route: [GLINT, WGLMR, USDCs],
+  outputToLp1Route: [GLINT, WGLMR],
+  // rewardToOutputRoute: [WGLMR, STELLA],
+  // pendingRewardsFunctionName: "pendingCake", // used for rewardsAvailable(), use correct function name from masterchef
 };
 
 const contractNames = {
   vault: "BeefyVaultV6",
-  strategy: "StrategyPangolinMultiRewardsLP",
+  strategy: "StrategyBeamChefLP",
 };
 
 async function main() {
@@ -66,7 +68,6 @@ async function main() {
   console.log("Deploying:", vaultParams.mooName);
 
   const predictedAddresses = await predictAddresses({ creator: deployer.address });
-
   const vaultConstructorArguments = [
     predictedAddresses.strategy,
     vaultParams.mooName,
@@ -75,23 +76,23 @@ async function main() {
   ];
   const vault = await Vault.deploy(...vaultConstructorArguments);
   await vault.deployed();
-
   const strategyConstructorArguments = [
     strategyParams.want,
     strategyParams.poolId,
+    strategyParams.masterchef,
     vault.address,
     strategyParams.unirouter,
     strategyParams.keeper,
     strategyParams.strategist,
     strategyParams.beefyFeeRecipient,
     strategyParams.outputToNativeRoute,
-    strategyParams.rewardToNativeRoutes,
-    strategyParams.nativeToLp0Route,
-    strategyParams.nativeToLp1Route,
+    strategyParams.outputToLp0Route,
+    strategyParams.outputToLp1Route,
   ];
   const strategy = await Strategy.deploy(...strategyConstructorArguments);
   await strategy.deployed();
 
+  const Lp1 = await strategy.outputToLp1();
   // add this info to PR
   console.log();
   console.log("Vault:", vault.address);
@@ -111,18 +112,19 @@ async function main() {
     );
   }
   // await setPendingRewardsFunctionName(strategy, strategyParams.pendingRewardsFunctionName);
-  await setCorrectCallFee(strategy, "avax" as BeefyChain);
-  // console.log(`Transfering Vault Owner to ${beefyfinance.vaultOwner}`);
-  // await vault.transferOwnership(beefyfinance.vaultOwner);
+  await setCorrectCallFee(strategy, hardhat.network.name as BeefyChain);
+  // await strategy.addRewardRoute(strategyParams.rewardToOutputRoute);
+  console.log(`Transfering Vault Owner to ${beefyfinance.vaultOwner}`);
+  await vault.transferOwnership(beefyfinance.vaultOwner);
   // await strategy.transferOwnership(beefyfinance.strategyOwner);
   console.log();
 
   await Promise.all(verifyContractsPromises);
 
-  if (hardhat.network.name === "bsc") {
-    await registerSubsidy(vault.address, deployer);
-    await registerSubsidy(strategy.address, deployer);
-  }
+  // if (hardhat.network.name === "bsc") {
+  //   await registerSubsidy(vault.address, deployer);
+  //   await registerSubsidy(strategy.address, deployer);
+  // }
 }
 
 main()

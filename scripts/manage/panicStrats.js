@@ -4,20 +4,13 @@ const ethers = hardhat.ethers;
 
 const abi = ["function panic() public", "function paused() public view returns (bool)"];
 
-const contracts = [
-  "0xb16ceE470632ba94b7d21d2bC56d284ff0b0C04C",
-  "0xBF36AF3bfE6C4cD0286C24761060488eB1af2618",
-  "0xf8B5Cb47232938f1A75546fA5182b8af312Fc380",
-  "0xfA416c3b89cc2E7902F58A4bEA62Ab7E24bd5985",
-  "0x45973436B06e46dc37333e65f98A190A392476a4",
-  "0xB126E22F4d9EfE943c94E0Ef493FF34f98AdC9E1",
-];
+const contracts = ["0x60c48584CfAe8e7D5263f2433FFD994e4A8D7C28"];
 
 async function main() {
-  const [_, keeper, rewarder] = await ethers.getSigners();
+  const [deployer, _] = await ethers.getSigners();
 
   for (const contract of contracts) {
-    const strategy = await ethers.getContractAt(abi, contract, rewarder);
+    const strategy = await ethers.getContractAt(abi, contract);
     try {
       const paused = await strategy.paused();
 

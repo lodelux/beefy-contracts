@@ -1,15 +1,20 @@
 const hardhat = require("hardhat");
 const { addressBook } = require("blockchain-addressbook");
 
-const { beefyfinance, pangolin } = addressBook.avax.platforms;
+const { beefyfinance, pangolin } = addressBook.bsc.platforms;
 
 const ethers = hardhat.ethers;
 async function main() {
   const Strategy = await ethers.getContractAt(
-    ["function harvest() external"],
-    "0x2BF1E2BbAbF7704D7C849c76456B208204086D18"
+    ["function harvest() external", "function unpause() external", "function paused() public view returns (bool)"],
+    "0x60c48584CfAe8e7D5263f2433FFD994e4A8D7C28"
   );
 
+  let paused = await Strategy.paused();
+  if (paused) {
+    const unpause = await Strategy.unpause();
+    await unpause.wait();
+  }
   const tx = await Strategy.harvest();
   tx.wait();
   console.log("harvested");

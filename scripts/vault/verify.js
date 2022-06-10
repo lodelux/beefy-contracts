@@ -2,28 +2,42 @@ const hardhat = require("hardhat");
 const { addressBook } = require("blockchain-addressbook");
 
 const {
-  platforms: { pangolin, beefyfinance },
+  platforms: { stellaswap, beefyfinance },
   tokens: {
-    WAVAX: { address: WAVAX },
-    PNG: { address: PNG },
-    KLO: { address: KLO },
+    WGLMR: { address: WGLMR },
+    STELLA: { address: STELLA },
+    WBTC: { address: WBTC },
   },
-} = addressBook.avax;
+} = addressBook.moonbeam;
 
-const want = web3.utils.toChecksumAddress("0x6745d7F9289d7d75B5121876B1b9D8DA775c9a3E");
+const shouldVerifyOnEtherscan = true;
+
+const want = web3.utils.toChecksumAddress("0xE28459075c806b1bFa72A38E669CCd6Fb4125f6a");
+
+const vaultParams = {
+  mooName: "Moo Stellaswap WBTCmad-GLMR",
+  mooSymbol: "mooStellaswapWBTCmad-GLMR",
+  delay: 21600,
+};
 
 const strategyParams = {
   want,
-  poolId: 12,
-  unirouter: pangolin.router,
+  poolId: 13,
+  masterchef: stellaswap.masterchefV1distributorV2,
+  unirouter: stellaswap.router,
   strategist: "0xc75E1B127E288f1a33606a52AB5C91BBe64EaAfe", // some address
   keeper: beefyfinance.keeper,
   beefyFeeRecipient: beefyfinance.beefyFeeRecipient,
-  outputToNativeRoute: [PNG, WAVAX],
-  nativeToLp0Route: [WAVAX, KLO],
-  nativeToLp1Route: [WAVAX],
-  rewardToNativeRoutes: [[KLO, WAVAX]],
-  // pendingRewardsFunctionName: "pendingTri", // used for rewardsAvailable(), use correct function name from masterchef
+  outputToNativeRoute: [STELLA, WGLMR],
+  outputToLp0Route: [STELLA, WGLMR, WBTC],
+  outputToLp1Route: [STELLA, WGLMR],
+  rewardToOutputRoute: [WGLMR, STELLA],
+  // pendingRewardsFunctionName: "pendingCake", // used for rewardsAvailable(), use correct function name from masterchef
+};
+
+const contractNames = {
+  vault: "BeefyVaultV6",
+  strategy: "StrategyStellaMultiRewardsLP",
 };
 
 
@@ -47,20 +61,20 @@ async function main() {
   // })
 
   await hardhat.run("verify:verify", {
-    address: "0x2BF1E2BbAbF7704D7C849c76456B208204086D18",
+    address: "0x3CFe04A49a4A52F5ec1904a9e6fDB7fF6E1195B1",
     constructorArguments: [
       strategyParams.want,
       strategyParams.poolId,
-      "0x9C9C14f28F07eDe4d796aED2D7038EF6F23494A8",
+      strategyParams.masterchef,
+      "0x6A12CC9224426B15C43Bfa5e539BB452c1A17A11",
       strategyParams.unirouter,
       strategyParams.keeper,
       strategyParams.strategist,
       strategyParams.beefyFeeRecipient,
       strategyParams.outputToNativeRoute,
-      strategyParams.rewardToNativeRoutes,
-      strategyParams.nativeToLp0Route,
-      strategyParams.nativeToLp1Route,
-      ],
+      strategyParams.outputToLp0Route,
+      strategyParams.outputToLp1Route,
+    ],
   });
 }
 

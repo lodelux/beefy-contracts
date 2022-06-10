@@ -1,17 +1,19 @@
 const hardhat = require("hardhat");
 const { addressBook } = require("blockchain-addressbook");
 
-const { beefyfinance } = addressBook.avax.platforms;
+
+//SET!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+const { beefyfinance } = addressBook.moonbeam.platforms;
 
 const ethers = hardhat.ethers;
 
 const abi = ["function transferOwnership(address newOwner) public"];
 
-const contracts = ["0x63B72C55994662811E3fcfC49dF879304eB2e808"];
+const contracts = ["0x3CFe04A49a4A52F5ec1904a9e6fDB7fF6E1195B1"];
 
 async function main() {
-  const vault = await ethers.getContractAt(abi, "0x9C9C14f28F07eDe4d796aED2D7038EF6F23494A8");
-  const strategy = await ethers.getContractAt(abi, "0x2BF1E2BbAbF7704D7C849c76456B208204086D18");
+  // const vault = await ethers.getContractAt(abi, "0x7a20f3d9a95C07130078DB77484AC2DD694cB9d9");
+  const strategy = await ethers.getContractAt(abi, "0x860Aae950eE05c230f806099E314ecB919EDbf57");
   // console.log("transfering vault\n");
   // let tx1 = await vault.transferOwnership(beefyfinance.vaultOwner);
   // console.log("tx1 sent");
