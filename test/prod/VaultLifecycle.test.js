@@ -8,14 +8,15 @@ const { delay } = require("../../utils/timeHelpers");
 
 const TIMEOUT = 10 * 60 * 1000000;
 
+// SET
 const chainName = "moonbeam";
 const chainData = addressBook[chainName];
 const { beefyfinance } = chainData.platforms;
 
 const config = {
-  vault: "0x56A560916F298cB97a77BDABAA378eB2ea2d8653",
+  vault: "0x9c2531D432268eB11daac0F3bC028A449E8b9FeB",
   vaultContract: "BeefyVaultV6",
-  strategyContract: "StrategyBeamChefLP",
+  strategyContract: "StrategyStellaMultiRewardsLP",
   testAmount: ethers.utils.parseEther("500"),
   wnative: chainData.tokens.WNATIVE.address,
   keeper: beefyfinance.keeper,
@@ -78,7 +79,7 @@ describe("VaultLifecycleTest", () => {
 
     const vaultBal = await vault.balance();
     const pricePerShare = await vault.getPricePerFullShare();
-    await delay(5000);
+    await delay(60000);
     //  const callRewardBeforeHarvest = await strategy.callReward();
     //  expect(callRewardBeforeHarvest).to.be.gt(0);
     await strategy.connect(keeper).managerHarvest();

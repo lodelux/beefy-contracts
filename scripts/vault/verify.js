@@ -2,44 +2,42 @@ const hardhat = require("hardhat");
 const { addressBook } = require("blockchain-addressbook");
 
 const {
-  platforms: { stellaswap, beefyfinance },
+  platforms: { joe, beefyfinance },
   tokens: {
-    WGLMR: { address: WGLMR },
-    STELLA: { address: STELLA },
-    WBTC: { address: WBTC },
+    AVAX: { address: AVAX },
+    JOE: { address: JOE },
   },
-} = addressBook.moonbeam;
+} = addressBook.avax;
 
+const BTCb = web3.utils.toChecksumAddress("0x152b9d0fdc40c096757f570a51e494bd4b943e50");
+const want = web3.utils.toChecksumAddress("0x2fD81391E30805Cc7F2Ec827013ce86dc591B806");
 const shouldVerifyOnEtherscan = true;
 
-const want = web3.utils.toChecksumAddress("0xE28459075c806b1bFa72A38E669CCd6Fb4125f6a");
-
 const vaultParams = {
-  mooName: "Moo Stellaswap WBTCmad-GLMR",
-  mooSymbol: "mooStellaswapWBTCmad-GLMR",
+  mooName: "Moo Joe BTC.b-AVAX",
+  mooSymbol: "mooJoeBTCbAVAX",
   delay: 21600,
 };
 
 const strategyParams = {
-  want,
+  want: want,
   poolId: 13,
-  masterchef: stellaswap.masterchefV1distributorV2,
-  unirouter: stellaswap.router,
-  strategist: "0xc75E1B127E288f1a33606a52AB5C91BBe64EaAfe", // some address
+  masterchef: joe.boostedMasterChef,
+  boostStaker: joe.boostStaker,
+  unirouter: joe.router,
   keeper: beefyfinance.keeper,
+  strategist: "0xc75E1B127E288f1a33606a52AB5C91BBe64EaAfe", // some address
   beefyFeeRecipient: beefyfinance.beefyFeeRecipient,
-  outputToNativeRoute: [STELLA, WGLMR],
-  outputToLp0Route: [STELLA, WGLMR, WBTC],
-  outputToLp1Route: [STELLA, WGLMR],
-  rewardToOutputRoute: [WGLMR, STELLA],
-  // pendingRewardsFunctionName: "pendingCake", // used for rewardsAvailable(), use correct function name from masterchef
+  outputToNativeRoute: [JOE, AVAX],
+  nativeToLp0Route: [AVAX, BTCb],
+  nativeToLp1Route: [AVAX],
+  rewardToNativeRoute: [],
 };
 
 const contractNames = {
   vault: "BeefyVaultV6",
-  strategy: "StrategyStellaMultiRewardsLP",
+  strategy: "StrategyTraderJoeBoostedLP",
 };
-
 
 async function main() {
   if (Object.values(config).some(v => v === undefined)) {
@@ -61,19 +59,20 @@ async function main() {
   // })
 
   await hardhat.run("verify:verify", {
-    address: "0x3CFe04A49a4A52F5ec1904a9e6fDB7fF6E1195B1",
+    address: "0x8Bd3876A1C6079d35103bC1a7FD450F8024D5deD",
     constructorArguments: [
       strategyParams.want,
       strategyParams.poolId,
       strategyParams.masterchef,
-      "0x6A12CC9224426B15C43Bfa5e539BB452c1A17A11",
+      strategyParams.boostStaker,
+      "0x10d52685E9f55884a67a88f2b5Ed2215D607d0a2",
       strategyParams.unirouter,
       strategyParams.keeper,
       strategyParams.strategist,
       strategyParams.beefyFeeRecipient,
       strategyParams.outputToNativeRoute,
-      strategyParams.outputToLp0Route,
-      strategyParams.outputToLp1Route,
+      strategyParams.nativeToLp0Route,
+      strategyParams.nativeToLp1Route,
     ],
   });
 }

@@ -230,9 +230,13 @@ contract StrategyTraderJoeBoostedLP is StratManager, FeeManager, GasThrottler {
             _nativeBal = _nativeBal.add(_amountOut[_amountOut.length -1]);
         }
         
-        if (_secondBal > 0 && outputToNativeRoute.length > 0) {
-            uint256[] memory _secondAmountOut = IUniswapRouterETH(unirouter).getAmountsOut(_secondBal, secondOutputToNativeRoute);
-            _nativeBal = _nativeBal.add(_secondAmountOut[_secondAmountOut.length -1]);
+        if (_secondBal > 0 ) {
+            if (secondOutputToNativeRoute.length > 0) {
+                uint256[] memory _secondAmountOut = IUniswapRouterETH(unirouter).getAmountsOut(_secondBal, secondOutputToNativeRoute);
+                _nativeBal = _nativeBal.add(_secondAmountOut[_secondAmountOut.length -1]);
+            } else {
+                _nativeBal = _nativeBal.add(_secondBal);
+            }
         }
 
         return _nativeBal.mul(45).div(1000).mul(callFee).div(MAX_FEE);
@@ -295,6 +299,7 @@ contract StrategyTraderJoeBoostedLP is StratManager, FeeManager, GasThrottler {
         IERC20(lpToken1).safeApprove(unirouter, uint256(-1));
 
         if (secondOutputToNativeRoute.length > 0) {
+            IERC20(secondOutputToNativeRoute[0]).safeApprove(unirouter, uint256(0));
             IERC20(secondOutputToNativeRoute[0]).safeApprove(unirouter, uint256(-1));
         }
     }

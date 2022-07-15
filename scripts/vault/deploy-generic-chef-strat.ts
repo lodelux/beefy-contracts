@@ -9,43 +9,40 @@ import { BeefyChain } from "../../utils/beefyChain";
 const registerSubsidy = require("../../utils/registerSubsidy");
 
 const {
-  platforms: { beamswap, beefyfinance },
+  platforms: { stellaswap, beefyfinance },
   tokens: {
-    WGLMR: { address: WGLMR },
-    GLINT: { address: GLINT },
-    xcDOT: { address: xcDOT },
-    USDCs: { address: USDCs },
+    STELLA: { address: STELLA },
+    WELL: { address: WELL },
+    GLMR: { address: GLMR },
   },
 } = addressBook.moonbeam;
 
-const shouldVerifyOnEtherscan = true;
-
-const want = web3.utils.toChecksumAddress("0x6Ba38f006aFe746B9A0d465e53aB4182147AC3D7");
+const want = web3.utils.toChecksumAddress("0xb536c1f9a157b263b70a9a35705168acc0271742");
+const shouldVerifyOnEtherscan = false;
 
 const vaultParams = {
-  mooName: "Moo Beam USDCmad-WGLMR",
-  mooSymbol: "mooBeamWUSDCmad-WGLMR",
+  mooName: "Moo Stella WELL-GLMR",
+  mooSymbol: "mooStellaWellGlmr",
   delay: 21600,
 };
-
+  
 const strategyParams = {
-  want,
+  want: want,
   poolId: 15,
-  masterchef: beamswap.masterchef,
-  unirouter: beamswap.router,
-  strategist: "0xc75E1B127E288f1a33606a52AB5C91BBe64EaAfe", // some address
+  masterchef: stellaswap.masterchefV1distributorV2,
+  unirouter: stellaswap.router,
   keeper: beefyfinance.keeper,
+  strategist: "0xc75E1B127E288f1a33606a52AB5C91BBe64EaAfe", // some address
   beefyFeeRecipient: beefyfinance.beefyFeeRecipient,
-  outputToNativeRoute: [GLINT, WGLMR],
-  outputToLp0Route: [GLINT, WGLMR, USDCs],
-  outputToLp1Route: [GLINT, WGLMR],
-  // rewardToOutputRoute: [WGLMR, STELLA],
-  // pendingRewardsFunctionName: "pendingCake", // used for rewardsAvailable(), use correct function name from masterchef
+  outputToNativeRoute: [STELLA, GLMR],
+  outputToLp0Route: [STELLA, GLMR, WELL],
+  outputToLp1Route: [STELLA, GLMR],
+  rewardToOutPutRoute: [WELL,GLMR,STELLA],
 };
 
 const contractNames = {
   vault: "BeefyVaultV6",
-  strategy: "StrategyBeamChefLP",
+  strategy: "StrategyStellaMultiRewardsLP",
 };
 
 async function main() {
@@ -92,7 +89,6 @@ async function main() {
   const strategy = await Strategy.deploy(...strategyConstructorArguments);
   await strategy.deployed();
 
-  const Lp1 = await strategy.outputToLp1();
   // add this info to PR
   console.log();
   console.log("Vault:", vault.address);
@@ -107,16 +103,19 @@ async function main() {
   if (shouldVerifyOnEtherscan) {
     // skip await as this is a long running operation, and you can do other stuff to prepare vault while this finishes
     verifyContractsPromises.push(
-      verifyContract(vault.address, vaultConstructorArguments),
+      // verifyContract(vault.address, vaultConstructorArguments),
       verifyContract(strategy.address, strategyConstructorArguments)
     );
   }
   // await setPendingRewardsFunctionName(strategy, strategyParams.pendingRewardsFunctionName);
   await setCorrectCallFee(strategy, hardhat.network.name as BeefyChain);
-  // await strategy.addRewardRoute(strategyParams.rewardToOutputRoute);
+
+  if (strategyParams.rewardToOutPutRoute.length > 0) {
+    console.log("adding rewardToNativeRoute");
+    await strategy.addRewardRoute(strategyParams.rewardToOutPutRoute);
+  }
   console.log(`Transfering Vault Owner to ${beefyfinance.vaultOwner}`);
   await vault.transferOwnership(beefyfinance.vaultOwner);
-  // await strategy.transferOwnership(beefyfinance.strategyOwner);
   console.log();
 
   await Promise.all(verifyContractsPromises);
